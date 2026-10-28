@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מחיקת חשבון – שלומי שלי</title>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; max-width: 760px; margin: 0 auto; padding: 24px 16px; line-height: 1.7; color: #1d2b2b; background: #fff; }
+  h1, h2 { color: #0D6670; }
+  a { color: #0D6670; }
+  .box { border: 1px solid #d5e3e3; border-radius: 12px; padding: 16px; margin: 16px 0; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 18px; cursor: pointer; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .primary { background: #0D6670; color: #fff; }
+  .danger { background: #b3261e; color: #fff; }
+  .plain { background: #eef4f4; color: #1d2b2b; }
+  .error { color: #b3261e; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<h1>מחיקת חשבון – שלומי שלי</h1>
+
+<h2>מחיקה מתוך האפליקציה</h2>
+<ol>
+  <li>פותחים את האפליקציה "שלומי שלי" ועוברים למסך <strong>האזור שלי</strong>.</li>
+  <li>לוחצים על <strong>מחיקת החשבון</strong> ומאשרים.</li>
+</ol>
+
+<h2>מחיקה מהעמוד הזה</h2>
+<div class="box">
+  <div id="signed-out">
+    <p>מתחברים עם אותו חשבון Google שאיתו התחברתם לאפליקציה.</p>
+    <button class="primary" id="sign-in">התחברות עם Google</button>
+  </div>
+  <div id="signed-in" hidden>
+    <p>מחובר כ: <strong id="email"></strong></p>
+    <button class="danger" id="delete">מחיקת החשבון לצמיתות</button>
+    <button class="plain" id="sign-out">התנתקות</button>
+  </div>
+  <p id="done" hidden><strong>החשבון וכל הפרסומים שלך נמחקו.</strong></p>
+  <p id="message" class="error" hidden></p>
+</div>
+
+<h2>מה נמחק</h2>
+<ul>
+  <li>החשבון: כתובת האימייל, השם ואישור תנאי השימוש.</li>
+  <li>כל המודעות, העסקים והנכסים שפרסמתם, כולל פרטי הקשר שבהם.</li>
+  <li>כל התמונות שהעליתם.</li>
+  <li>דיווחים ששלחתם על פרסומים.</li>
+</ul>
+<p>המחיקה מתבצעת מיד ולצמיתות, ואי אפשר לשחזר אותה.</p>
+
+<p><a href="privacy.html">מדיניות הפרטיות המלאה</a></p>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js"></script>
+<script>
+  // The publishable key is public by design (it ships in the app too); row-level security protects the data.
+  const client = supabase.createClient('https://otlafmdtrtcekrcjudwg.supabase.co', 'sb_publishable_3bHZSQhKPk50cZmHiqjoew_oAPoM6sP');
+  const IMAGE_BUCKET = 'content-images';
+  const $ = (id) => document.getElementById(id);
+
+  function showMessage(text) {
+    $('message').textContent = text;
+    $('message').hidden = !text;
+  }
+
+  function render(session) {
+    $('signed-out').hidden = Boolean(session);
+    $('signed-in').hidden = !session;
+    if (session) $('email').textContent = session.user.email;
+  }
+
+  $('sign-in').onclick = async () => {
+    showMessage('');
+    const redirectTo = location.origin + location.pathname;
+    const { error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+    if (error) showMessage('ההתחברות נכשלה, נסו שוב');
+  };
+
+  $('sign-out').onclick = async () => {
+    await client.auth.signOut();
+    render(null);
+  };
+
+  $('delete').onclick = async () => {
+    if (!confirm('החשבון וכל הפרסומים שלך יימחקו לצמיתות. להמשיך?')) return;
+    showMessage('');
+    $('delete').disabled = true;
+    try {
+      const { data: { session } } = await client.auth.getSession();
+      if (!session) return render(null);
+
+      // Same order as the app: remove the user's images first, then the account (which cascades to their posts).
+      const folder = `users/${session.user.id}`;
+      const { data: files } = await client.storage.from(IMAGE_BUCKET).list(folder, { limit: 1000 });
+      const paths = (files ?? []).map((file) => `${folder}/${file.name}`);
+      if (paths.length) await client.storage.from(IMAGE_BUCKET).remove(paths);
+
+      const { error } = await client.rpc('delete_my_account');
+      if (error) {
+        showMessage(error.message.includes('admin')
+          ? 'חשבון של מנהל לא נמחק מכאן. פנו למנהל האפליקציה.'
+          : 'המחיקה נכשלה, נסו שוב');
+        return;
+      }
+      await client.auth.signOut();
+      $('signed-in').hidden = true;
+      $('done').hidden = false;
+    } finally {
+      $('delete').disabled = false;
+    }
+  };
+
+  client.auth.onAuthStateChange((_event, session) => {
+    if ($('done').hidden) render(session);
+  });
+  client.auth.getSession().then(({ data }) => render(data.session));
+</script>
+</body>
+</html>
